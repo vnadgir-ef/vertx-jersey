@@ -2,134 +2,98 @@ package com.englishtown.vertx.jersey.impl;
 
 import com.englishtown.vertx.jersey.inject.VertxPostResponseProcessor;
 import io.vertx.core.http.HttpHeaders;
-import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
-import io.vertx.core.http.HttpVersion;
-import io.vertx.core.logging.Logger;
 import io.vertx.core.logging.LoggerFactory;
 import org.glassfish.jersey.server.ContainerRequest;
 import org.glassfish.jersey.server.ContainerResponse;
 
-import javax.ws.rs.core.Request;
 import java.time.Clock;
 import java.util.Optional;
+import java.util.logging.Logger;
+
+import static com.englishtown.vertx.jersey.impl.RequestLogProcessor.HTTP_VERSION;
+import static com.englishtown.vertx.jersey.impl.RequestLogProcessor.REMOTE_ADDRESS;
+import static com.englishtown.vertx.jersey.impl.RequestLogProcessor.START_TIMESTAMP;
 
 public class RequestLogPostProcessor implements VertxPostResponseProcessor{
-    public static final String X_FORWARDED_FOR = "xforwardedfor";
-    private final Logger LOGGER = LoggerFactory.getLogger(RequestLogPostProcessor.class);
-
+    public static final String X_FORWARDED_FOR = "x-forwarded-for";
+    public static final char WHITESPACE = ' ';
+    private final static Logger LOGGER = Logger.getLogger(RequestLogPostProcessor.class.getName());
 
     @Override
     public void process(HttpServerResponse vertxResponse, ContainerResponse jerseyResponse) {
-        final StringBuilder buf = new StringBuilder(256);
-        ContainerRequest requestContext = jerseyResponse.getRequestContext();
-        String address = getRemoteAddress(requestContext);
-        buf.append(address);
-        buf.append("  "); //User Identity
-        buf.append("  "); //Auth Principal name
+        final String logLine = createLogLine(vertxResponse, jerseyResponse);
+        LOGGER.info(logLine);
+    }
 
-        String timestamp = getTimestamp();
-        buf.append(timestamp);
-        buf.append(' ');
+    protected String createLogLine(HttpServerResponse vertxResponse, ContainerResponse jerseyResponse) {
+        final StringBuilder buf = new StringBuilder(256);
+
+        ContainerRequest requestContext = jerseyResponse.getRequestContext();
+
+        buf.append(getRemoteAddress(requestContext)).append(WHITESPACE);
+        buf.append("-").append(WHITESPACE); //User Identity
+        buf.append("-").append(WHITESPACE); //Auth Principal name
+        buf.append(getTimestamp()).append(WHITESPACE);
 
         buf.append('"');
-        buf.append(requestContext.getMethod());
-        buf.append(' ');
-        buf.append(requestContext.getBaseUri().toString());
-        buf.append(' ');
-        buf.append(requestContext.get));
-        buf.append("\" ");
+        buf.append(requestContext.getMethod()).append(WHITESPACE);
+        buf.append(requestContext.getRequestUri().getRawPath()).append(WHITESPACE);
+        buf.append(requestContext.getProperty(HTTP_VERSION));
+        buf.append('"').append(WHITESPACE);
 
-        int status = httpServerResponse.getStatusCode();
-        buf.append(status);
+        buf.append(vertxResponse.getStatusCode()).append(WHITESPACE);
 
-        Optional<Long> contentLengthValue = getContentLengthValue(httpServerResponse);
-        if(contentLengthValue.isPresent()) {
-            final long responseLength = contentLengthValue.get();
-            if (responseLength >= 0) {
-                buf.append(' ');
-                if (responseLength > 99999) {
-                    buf.append(responseLength);
-                } else {
-                    if (responseLength > 9999) {
-                        buf.append((char) ('0' + ((responseLength / 10000) % 10)));
-                    }
-                    if (responseLength > 999) {
-                        buf.append((char) ('0' + ((responseLength / 1000) % 10)));
-                    }
-                    if (responseLength > 99) {
-                        buf.append((char) ('0' + ((responseLength / 100) % 10)));
-                    }
-                    if (responseLength > 9) {
-                        buf.append((char) ('0' + ((responseLength / 10) % 10)));
-                    }
-                    buf.append((char) ('0' + (responseLength % 10)));
-                }
-                buf.append(' ');
-            }
-        }else {
-            buf.append("  ");
-        }
+        String contentLengthValue = getContentLengthValue(jerseyResponse);
+        buf.append(contentLengthValue).append(WHITESPACE);
 
-        buf.append(' ');
         final long now = System.currentTimeMillis();
-        buf.append(now  startTime);
+        final long startTime = (Long)requestContext.getProperty(START_TIMESTAMP);
+        buf.append(now - startTime).append(WHITESPACE);
 
-        buf.append(' ');
+        buf.append(getReferrer(requestContext)).append(WHITESPACE);
+        buf.append(getUserAgent(requestContext)).append(WHITESPACE);
+        return buf.toString();
+    }
 
-        String referer = httpServerRequest.headers().get(HttpHeaders.REFERER);
-        if (referer != null)
-            buf.append("\"" + referer + "\" ");
-        else
-        {
-            buf.append("\"\"");
-        }
-
-        String userAgent = httpServerRequest.headers().get(HttpHeaders.USER_AGENT);
-
+    private String getUserAgent(ContainerRequest requestContext){
+        String userAgent = requestContext.getHeaderString(HttpHeaders.USER_AGENT.toString());
         if(userAgent != null){
-            buf.append('"');
-            buf.append(userAgent);
-            buf.append('"');
-        }else{
-            buf.append("\"\"");
+            return "\"" + userAgent + "\"";
         }
+        return "\"-\"";
+    }
 
-        LOGGER.info(buf.toString());
+    private String getReferrer(ContainerRequest requestContext) {
+        String referrer = requestContext.getHeaderString(HttpHeaders.REFERER.toString());
+        if(referrer != null){
+            return "\"" + referrer + "\"";
+        }
+        return "\"-\"";
     }
 
     private String getTimestamp() {
-        return " [" + Clock.systemUTC().instant().toString() + "] ";
+        return "[" + Clock.systemUTC().instant().toString() + "]";
     }
 
     private String getRemoteAddress(ContainerRequest httpServerRequest) {
         String address = httpServerRequest.getHeaderString(X_FORWARDED_FOR);
         if (address == null) {
-            address = (String)httpServerRequest.getProperty("remoteAddress");
+            address = (String)httpServerRequest.getProperty(REMOTE_ADDRESS);
         }
-        return address;
+        return Optional.ofNullable(address).orElse("-");
     }
 
-    private Optional<Long> getContentLengthValue(HttpServerResponse event) {
-        String s = event.headers().get(HttpHeaders.CONTENT_LENGTH);
+    private String getContentLengthValue(ContainerResponse event) {
+        String s = event.getHeaderString(HttpHeaders.CONTENT_LENGTH.toString());
         try{
-            return Optional.of(Long.parseLong(s));
+            final long responseLength = Long.parseLong(s);
+            if (responseLength >= 0) {
+                return String.valueOf(responseLength);
+            }
+            return "-";
         }catch (Exception e){
-            return Optional.empty();
-        }
-
-    }
-
-    private String getVersion(HttpVersion version){
-        switch (version){
-            case HTTP_1_0:
-                return "HTTP/1.0";
-            case HTTP_1_1:
-                return  "HTTP/1.1";
-            default:
-                return "";
+            return "-";
         }
     }
-
-
 }

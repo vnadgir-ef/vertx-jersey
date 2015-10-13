@@ -141,13 +141,15 @@ public class HK2JerseyBinder extends AbstractBinder {
         bind(VertxResponseWriterProvider.class).to(ContainerResponseWriterProvider.class);
         bind(WriteStreamBodyWriter.class).to(MessageBodyWriter.class).in(Singleton.class);
 
+        bind(RequestLogProcessor.class).to(VertxRequestProcessor.class).in(Singleton.class);
+        bind(RequestLogPostProcessor.class).to(VertxPostResponseProcessor.class).in(Singleton.class);
+
         bindFactory(VertxRequestProcessorFactory.class).to(new TypeLiteral<List<VertxRequestProcessor>>() {
         });
         bindFactory(VertxResponseProcessorFactory.class).to(new TypeLiteral<List<VertxResponseProcessor>>() {
         });
         bindFactory(VertxPostResponseProcessorFactory.class).to(new TypeLiteral<List<VertxPostResponseProcessor>>() {
         });
-
     }
 
 }
